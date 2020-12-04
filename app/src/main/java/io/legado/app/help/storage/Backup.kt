@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import io.legado.app.App
 import io.legado.app.constant.PreferKey
+import io.legado.app.help.DefaultData
 import io.legado.app.help.ReadBookConfig
+import io.legado.app.help.ThemeConfig
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.utils.*
 import kotlinx.coroutines.Dispatchers.IO
@@ -18,7 +20,7 @@ import java.util.concurrent.TimeUnit
 object Backup {
 
     val backupPath: String by lazy {
-        FileUtils.getDirFile(App.INSTANCE.filesDir, "backup").absolutePath
+        FileUtils.getFile(App.INSTANCE.filesDir, "backup").absolutePath
     }
 
     val backupFileNames by lazy {
@@ -30,10 +32,13 @@ object Backup {
             "rssSource.json",
             "rssStar.json",
             "replaceRule.json",
-            "txtTocRule.json",
             "readRecord.json",
-            "httpTTS.json",
-            ReadBookConfig.readConfigFileName,
+            "searchHistory.json",
+            DefaultData.txtTocRuleFileName,
+            DefaultData.httpTtsFileName,
+            ReadBookConfig.configFileName,
+            ReadBookConfig.shareConfigFileName,
+            ThemeConfig.configFileName,
             "config.xml"
         )
     }
@@ -51,6 +56,7 @@ object Backup {
         context.putPrefLong(PreferKey.lastBackup, System.currentTimeMillis())
         withContext(IO) {
             synchronized(this@Backup) {
+                FileUtils.deleteFile(backupPath)
                 writeListToJson(App.db.bookDao().all, "bookshelf.json", backupPath)
                 writeListToJson(App.db.bookmarkDao().all, "bookmark.json", backupPath)
                 writeListToJson(App.db.bookGroupDao().all, "bookGroup.json", backupPath)
@@ -58,11 +64,19 @@ object Backup {
                 writeListToJson(App.db.rssSourceDao().all, "rssSource.json", backupPath)
                 writeListToJson(App.db.rssStarDao().all, "rssStar.json", backupPath)
                 writeListToJson(App.db.replaceRuleDao().all, "replaceRule.json", backupPath)
-                writeListToJson(App.db.txtTocRule().all, "txtTocRule.json", backupPath)
                 writeListToJson(App.db.readRecordDao().all, "readRecord.json", backupPath)
-                writeListToJson(App.db.httpTTSDao().all, "httpTTS.json", backupPath)
-                GSON.toJson(ReadBookConfig.configList)?.let {
-                    FileUtils.createFileIfNotExist(backupPath + File.separator + ReadBookConfig.readConfigFileName)
+                writeListToJson(App.db.searchKeywordDao().all, "searchHistory.json", backupPath)
+                writeListToJson(App.db.txtTocRule().all, DefaultData.txtTocRuleFileName, backupPath)
+                writeListToJson(App.db.httpTTSDao().all, DefaultData.httpTtsFileName, backupPath)
+                GSON.toJson(ReadBookConfig.configList).let {
+                    FileUtils.createFileIfNotExist(backupPath + File.separator + ReadBookConfig.configFileName)
+                        .writeText(it)
+                }
+                GSON.toJson(ReadBookConfig.shareConfig).let {
+                    FileUtils.createFileIfNotExist(backupPath + File.separator + ReadBookConfig.shareConfigFileName)
+                }
+                GSON.toJson(ThemeConfig.configList).let {
+                    FileUtils.createFileIfNotExist(backupPath + File.separator + ThemeConfig.configFileName)
                         .writeText(it)
                 }
                 Preferences.getSharedPreferences(App.INSTANCE, backupPath, "config")?.let { sp ->
@@ -80,7 +94,7 @@ object Backup {
                     edit.commit()
                 }
                 WebDavHelp.backUpWebDav(backupPath)
-                if (path.isContentPath()) {
+                if (path.isContentScheme()) {
                     copyBackup(context, Uri.parse(path), isAuto)
                 } else {
                     if (path.isEmpty()) {
@@ -130,7 +144,7 @@ object Backup {
             if (file.exists()) {
                 file.copyTo(
                     if (isAuto) {
-                        FileUtils.createFileIfNotExist(rootFile, fileName, "auto")
+                        FileUtils.createFileIfNotExist(rootFile, "auto", fileName)
                     } else {
                         FileUtils.createFileIfNotExist(rootFile, fileName)
                     }, true

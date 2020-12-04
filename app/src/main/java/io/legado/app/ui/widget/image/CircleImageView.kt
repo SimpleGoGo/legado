@@ -24,11 +24,11 @@ import io.legado.app.utils.sp
 import kotlin.math.min
 import kotlin.math.pow
 
-class CircleImageView(context: Context, attrs: AttributeSet) :
-    AppCompatImageView(
-        context,
-        attrs
-    ) {
+@Suppress("unused", "MemberVisibilityCanBePrivate")
+class CircleImageView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null
+) : AppCompatImageView(context, attrs) {
 
     private val mDrawableRect = RectF()
     private val mBorderRect = RectF()
@@ -118,6 +118,8 @@ class CircleImageView(context: Context, attrs: AttributeSet) :
     private var text: String? = null
 
     private var textColor = context.getCompatColor(R.color.primaryText)
+    private var textBold = false
+    var isInView = false
 
     init {
         super.setScaleType(SCALE_TYPE)
@@ -137,6 +139,7 @@ class CircleImageView(context: Context, attrs: AttributeSet) :
                 DEFAULT_CIRCLE_BACKGROUND_COLOR
             )
         text = a.getString(R.styleable.CircleImageView_text)
+        contentDescription = text
         if (a.hasValue(R.styleable.CircleImageView_textColor)) {
             textColor = a.getColor(
                 R.styleable.CircleImageView_textColor,
@@ -210,6 +213,7 @@ class CircleImageView(context: Context, attrs: AttributeSet) :
     private fun drawText(canvas: Canvas) {
         text?.let {
             textPaint.color = textColor
+            textPaint.isFakeBoldText = textBold
             textPaint.textSize = 15.sp.toFloat()
             val fm = textPaint.fontMetrics
             canvas.drawText(
@@ -221,8 +225,19 @@ class CircleImageView(context: Context, attrs: AttributeSet) :
         }
     }
 
+    fun setText(text: String?) {
+        this.text = text
+        contentDescription = text
+        invalidate()
+    }
+
     fun setTextColor(@ColorInt textColor: Int) {
         this.textColor = textColor
+        invalidate()
+    }
+
+    fun setTextBold(bold: Boolean) {
+        this.textBold = bold
         invalidate()
     }
 
@@ -415,7 +430,12 @@ class CircleImageView(context: Context, attrs: AttributeSet) :
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        return inTouchableArea(event.x, event.y) && super.onTouchEvent(event)
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                isInView = (inTouchableArea(event.x, event.y))
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     private fun inTouchableArea(x: Float, y: Float): Boolean {

@@ -9,8 +9,8 @@ import io.legado.app.base.BaseViewModel
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.help.BookHelp
-import io.legado.app.model.webBook.WebBook
 import io.legado.app.model.localBook.LocalBook
+import io.legado.app.model.webBook.WebBook
 import io.legado.app.service.help.ReadBook
 import kotlinx.coroutines.Dispatchers.IO
 
@@ -49,15 +49,15 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
     }
 
     fun loadBookInfo(
-        book: Book,
-        changeDruChapterIndex: ((chapters: List<BookChapter>) -> Unit)? = null
+        book: Book, canReName: Boolean = true,
+        changeDruChapterIndex: ((chapters: List<BookChapter>) -> Unit)? = null,
     ) {
         execute {
             if (book.isLocalBook()) {
                 loadChapter(book, changeDruChapterIndex)
             } else {
                 App.db.bookSourceDao().getBookSource(book.origin)?.let { bookSource ->
-                    WebBook(bookSource).getBookInfo(book, this)
+                    WebBook(bookSource).getBookInfo(book, this, canReName = canReName)
                         .onSuccess(IO) {
                             bookData.postValue(book)
                             if (inBookshelf) {
@@ -117,15 +117,9 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
         }
     }
 
-    fun loadGroup(groupId: Int, success: ((groupNames: String?) -> Unit)) {
+    fun loadGroup(groupId: Long, success: ((groupNames: String?) -> Unit)) {
         execute {
-            val groupNames = arrayListOf<String>()
-            App.db.bookGroupDao().all.forEach {
-                if (groupId and it.groupId > 0) {
-                    groupNames.add(it.groupName)
-                }
-            }
-            groupNames.joinToString(",")
+            App.db.bookGroupDao().getGroupNames(groupId).joinToString(",")
         }.onSuccess {
             success.invoke(it)
         }
@@ -133,28 +127,41 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
 
     fun changeTo(newBook: Book) {
         execute {
+            var oldTocSize: Int = newBook.totalChapterNum
             if (inBookshelf) {
-                bookData.value?.changeTo(newBook)
+                bookData.value?.let {
+                    oldTocSize = it.totalChapterNum
+                    it.changeTo(newBook)
+                }
             }
             bookData.postValue(newBook)
             if (newBook.tocUrl.isEmpty()) {
-                loadBookInfo(newBook) { upChangeDurChapterIndex(newBook, it) }
+                loadBookInfo(newBook, false) {
+                    upChangeDurChapterIndex(newBook, oldTocSize, it)
+                }
             } else {
-                loadChapter(newBook) { upChangeDurChapterIndex(newBook, it) }
+                loadChapter(newBook) {
+                    upChangeDurChapterIndex(newBook, oldTocSize, it)
+                }
             }
         }
     }
 
-    private fun upChangeDurChapterIndex(book: Book, chapters: List<BookChapter>) {
+    private fun upChangeDurChapterIndex(
+        book: Book,
+        oldTocSize: Int,
+        chapters: List<BookChapter>
+    ) {
         execute {
-            book.durChapterIndex = BookHelp.getDurChapterIndexByChapterTitle(
-                book.durChapterTitle,
+            book.durChapterIndex = BookHelp.getDurChapter(
                 book.durChapterIndex,
+                oldTocSize,
+                book.durChapterTitle,
                 chapters
             )
             book.durChapterTitle = chapters[book.durChapterIndex].title
             if (inBookshelf) {
-                App.db.bookDao().insert(book)
+                App.db.bookDao().update(book)
                 App.db.bookChapterDao().insert(*chapters.toTypedArray())
             }
             bookData.postValue(book)
@@ -224,6 +231,16 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
             }
         }.onSuccess {
             success?.invoke()
+        }
+    }
+
+    fun clearCache() {
+        execute {
+            BookHelp.clearCache(bookData.value!!)
+        }.onSuccess {
+            toast(R.string.clear_cache_success)
+        }.onError {
+            toast(it.stackTraceToString())
         }
     }
 

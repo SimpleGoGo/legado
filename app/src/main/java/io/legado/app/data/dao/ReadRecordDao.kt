@@ -10,7 +10,7 @@ interface ReadRecordDao {
     @get:Query("select * from readRecord")
     val all: List<ReadRecord>
 
-    @get:Query("select bookName, sum(readTime) as readTime from readRecord group by bookName")
+    @get:Query("select bookName, sum(readTime) as readTime from readRecord group by bookName order by bookName collate localized")
     val allShow: List<ReadRecordShow>
 
     @get:Query("select sum(readTime) from readRecord")
@@ -30,6 +30,9 @@ interface ReadRecordDao {
 
     @Delete
     fun delete(vararg record: ReadRecord)
+
+    @Query("delete from readRecord")
+    fun clear()
 
     @Query("delete from readRecord where bookName = :bookName")
     fun deleteByName(bookName: String)

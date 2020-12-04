@@ -2,7 +2,6 @@ package io.legado.app.ui.book.read.config
 
 import android.content.SharedPreferences
 import android.os.Bundle
-import android.util.DisplayMetrics
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -19,8 +18,8 @@ import io.legado.app.lib.theme.ATH
 import io.legado.app.lib.theme.backgroundColor
 import io.legado.app.service.BaseReadAloudService
 import io.legado.app.service.help.ReadAloud
-import io.legado.app.ui.book.read.Help
 import io.legado.app.utils.getPrefLong
+import io.legado.app.utils.getSize
 import io.legado.app.utils.postEvent
 
 class ReadAloudConfigDialog : DialogFragment() {
@@ -28,11 +27,7 @@ class ReadAloudConfigDialog : DialogFragment() {
 
     override fun onStart() {
         super.onStart()
-        val dm = DisplayMetrics()
-        activity?.let {
-            Help.upSystemUiVisibility(it)
-            it.windowManager?.defaultDisplay?.getMetrics(dm)
-        }
+        val dm = requireActivity().getSize()
         dialog?.window?.let {
             it.setBackgroundDrawableResource(R.color.transparent)
             it.setLayout((dm.widthPixels * 0.9).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -122,7 +117,6 @@ class ReadAloudConfigDialog : DialogFragment() {
             when (preference) {
                 is ListPreference -> {
                     val index = preference.findIndexOfValue(value)
-                    // Set the summary to reflect the new value.
                     preference.summary = if (index >= 0) preference.entries[index] else null
                 }
                 else -> {

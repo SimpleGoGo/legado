@@ -2,6 +2,7 @@ package io.legado.app.ui.book.search
 
 import android.app.Application
 import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.MutableLiveData
 import io.legado.app.App
 import io.legado.app.base.BaseViewModel
@@ -15,7 +16,7 @@ import kotlinx.coroutines.isActive
 
 class SearchViewModel(application: Application) : BaseViewModel(application),
     SearchBookModel.CallBack {
-    val handler = Handler()
+    val handler = Handler(Looper.getMainLooper())
     private val searchBookModel = SearchBookModel(this, this)
     var isSearchLiveData = MutableLiveData<Boolean>()
     var searchBookLiveData = MutableLiveData<List<SearchBook>>()
@@ -30,12 +31,15 @@ class SearchViewModel(application: Application) : BaseViewModel(application),
      * 开始搜索
      */
     fun search(key: String) {
-        if ((searchKey != key && key.isEmpty()) || key.isNotEmpty()) {
+        if ((searchKey == key) || key.isNotEmpty()) {
             searchBookModel.cancelSearch()
             searchBooks.clear()
             searchBookLiveData.postValue(searchBooks)
             searchID = System.currentTimeMillis()
             searchKey = key
+        }
+        if (searchKey.isEmpty()) {
+            return
         }
         searchBookModel.search(searchID, searchKey)
     }
@@ -111,7 +115,7 @@ class SearchViewModel(application: Application) : BaseViewModel(application),
                             && item.author == searchBook.author
                         ) {
                             hasSame = true
-                            searchBook.addOrigin(item.bookUrl)
+                            searchBook.addOrigin(item.origin)
                             break
                         }
                     }
@@ -141,7 +145,7 @@ class SearchViewModel(application: Application) : BaseViewModel(application),
                 }
             }
             if (!scope.isActive) return
-            searchBooks.sortWith(Comparator { o1, o2 ->
+            searchBooks.sortWith { o1, o2 ->
                 if (o1.name == searchKey && o2.name != searchKey) {
                     1
                 } else if (o1.name != searchKey && o2.name == searchKey) {
@@ -165,7 +169,7 @@ class SearchViewModel(application: Application) : BaseViewModel(application),
                 } else {
                     0
                 }
-            })
+            }
             if (!scope.isActive) return
             searchBooks = copyDataS
             upAdapter()

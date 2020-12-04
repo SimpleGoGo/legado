@@ -22,18 +22,20 @@ class WebBook(val bookSource: BookSource) {
     fun searchBook(
         key: String,
         page: Int? = 1,
+        variableBook: SearchBook,
         scope: CoroutineScope = Coroutine.DEFAULT,
-        context: CoroutineContext = Dispatchers.IO
+        context: CoroutineContext = Dispatchers.IO,
     ): Coroutine<ArrayList<SearchBook>> {
         return Coroutine.async(scope, context) {
-            searchBookSuspend(scope, key, page)
+            searchBookSuspend(scope, key, page, variableBook)
         }
     }
 
     suspend fun searchBookSuspend(
         scope: CoroutineScope,
         key: String,
-        page: Int? = 1
+        page: Int? = 1,
+        variableBook: SearchBook,
     ): ArrayList<SearchBook> {
         bookSource.searchUrl?.let { searchUrl ->
             val analyzeUrl = AnalyzeUrl(
@@ -41,7 +43,8 @@ class WebBook(val bookSource: BookSource) {
                 key = key,
                 page = page,
                 baseUrl = sourceUrl,
-                headerMapF = bookSource.getHeaderMap()
+                headerMapF = bookSource.getHeaderMap(),
+                book = variableBook
             )
             val res = analyzeUrl.getResponseAwait(bookSource.bookSourceUrl)
             return BookList.analyzeBookList(
@@ -50,6 +53,7 @@ class WebBook(val bookSource: BookSource) {
                 bookSource,
                 analyzeUrl,
                 res.url,
+                variableBook,
                 true
             )
         }
@@ -62,8 +66,9 @@ class WebBook(val bookSource: BookSource) {
     fun exploreBook(
         url: String,
         page: Int? = 1,
+        variableBook: SearchBook,
         scope: CoroutineScope = Coroutine.DEFAULT,
-        context: CoroutineContext = Dispatchers.IO
+        context: CoroutineContext = Dispatchers.IO,
     ): Coroutine<List<SearchBook>> {
         return Coroutine.async(scope, context) {
             val analyzeUrl = AnalyzeUrl(
@@ -79,6 +84,7 @@ class WebBook(val bookSource: BookSource) {
                 bookSource,
                 analyzeUrl,
                 res.url,
+                variableBook,
                 false
             )
         }
@@ -90,23 +96,23 @@ class WebBook(val bookSource: BookSource) {
     fun getBookInfo(
         book: Book,
         scope: CoroutineScope = Coroutine.DEFAULT,
-        context: CoroutineContext = Dispatchers.IO
+        context: CoroutineContext = Dispatchers.IO,
+        canReName: Boolean = true,
     ): Coroutine<Book> {
         return Coroutine.async(scope, context) {
             book.type = bookSource.bookSourceType
-            val body =
-                if (!book.infoHtml.isNullOrEmpty()) {
-                    book.infoHtml
-                } else {
-                    val analyzeUrl = AnalyzeUrl(
-                        book = book,
-                        ruleUrl = book.bookUrl,
-                        baseUrl = sourceUrl,
-                        headerMapF = bookSource.getHeaderMap()
-                    )
-                    analyzeUrl.getResponseAwait(bookSource.bookSourceUrl).body
-                }
-            BookInfo.analyzeBookInfo(book, body, bookSource, book.bookUrl)
+            if (!book.infoHtml.isNullOrEmpty()) {
+                book.infoHtml
+                BookInfo.analyzeBookInfo(book, book.infoHtml, bookSource, book.bookUrl, canReName)
+            } else {
+                val res = AnalyzeUrl(
+                    ruleUrl = book.bookUrl,
+                    baseUrl = sourceUrl,
+                    headerMapF = bookSource.getHeaderMap(),
+                    book = book
+                ).getResponseAwait(bookSource.bookSourceUrl)
+                BookInfo.analyzeBookInfo(book, res.body, bookSource, book.bookUrl, canReName)
+            }
             book
         }
     }
@@ -121,18 +127,30 @@ class WebBook(val bookSource: BookSource) {
     ): Coroutine<List<BookChapter>> {
         return Coroutine.async(scope, context) {
             book.type = bookSource.bookSourceType
-            val body =
-                if (book.bookUrl == book.tocUrl && !book.tocHtml.isNullOrEmpty()) {
-                    book.tocHtml
-                } else {
-                    AnalyzeUrl(
-                        book = book,
-                        ruleUrl = book.tocUrl,
-                        baseUrl = book.bookUrl,
-                        headerMapF = bookSource.getHeaderMap()
-                    ).getResponseAwait(bookSource.bookSourceUrl).body
-                }
-            BookChapterList.analyzeChapterList(this, book, body, bookSource, book.tocUrl)
+            if (book.bookUrl == book.tocUrl && !book.tocHtml.isNullOrEmpty()) {
+                BookChapterList.analyzeChapterList(
+                    this,
+                    book,
+                    book.tocHtml,
+                    bookSource,
+                    book.tocUrl
+                )
+            } else {
+                val res = AnalyzeUrl(
+                    book = book,
+                    ruleUrl = book.tocUrl,
+                    baseUrl = book.bookUrl,
+                    headerMapF = bookSource.getHeaderMap()
+                ).getResponseAwait(bookSource.bookSourceUrl)
+                BookChapterList.analyzeChapterList(
+                    this,
+                    book,
+                    res.body,
+                    bookSource,
+                    book.tocUrl
+                )
+            }
+
         }
     }
 
@@ -166,31 +184,37 @@ class WebBook(val bookSource: BookSource) {
             Debug.log(sourceUrl, "⇒正文规则为空,使用章节链接:${bookChapter.url}")
             return bookChapter.url
         }
-        val body =
-            if (bookChapter.url == book.bookUrl && !book.tocHtml.isNullOrEmpty()) {
-                book.tocHtml
-            } else {
-                val analyzeUrl =
-                    AnalyzeUrl(
-                        book = book,
-                        ruleUrl = bookChapter.url,
-                        baseUrl = book.tocUrl,
-                        headerMapF = bookSource.getHeaderMap()
-                    )
-                analyzeUrl.getResponseAwait(
-                    bookSource.bookSourceUrl,
-                    jsStr = bookSource.getContentRule().webJs,
-                    sourceRegex = bookSource.getContentRule().sourceRegex
-                ).body
-            }
-        return BookContent.analyzeContent(
-            scope,
-            body,
-            book,
-            bookChapter,
-            bookSource,
-            bookChapter.url,
-            nextChapterUrl
-        )
+        return if (bookChapter.url == book.bookUrl && !book.tocHtml.isNullOrEmpty()) {
+            BookContent.analyzeContent(
+                scope,
+                book.tocHtml,
+                book,
+                bookChapter,
+                bookSource,
+                bookChapter.getAbsoluteURL(),
+                nextChapterUrl
+            )
+        } else {
+            val res = AnalyzeUrl(
+                ruleUrl = bookChapter.getAbsoluteURL(),
+                baseUrl = book.tocUrl,
+                headerMapF = bookSource.getHeaderMap(),
+                book = book,
+                chapter = bookChapter
+            ).getResponseAwait(
+                bookSource.bookSourceUrl,
+                jsStr = bookSource.getContentRule().webJs,
+                sourceRegex = bookSource.getContentRule().sourceRegex
+            )
+            BookContent.analyzeContent(
+                scope,
+                res.body,
+                book,
+                bookChapter,
+                bookSource,
+                bookChapter.getAbsoluteURL(),
+                nextChapterUrl
+            )
+        }
     }
 }

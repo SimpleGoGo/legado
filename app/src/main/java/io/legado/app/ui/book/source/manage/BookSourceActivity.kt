@@ -14,38 +14,43 @@ import androidx.lifecycle.LiveData
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.snackbar.Snackbar
 import io.legado.app.App
 import io.legado.app.R
 import io.legado.app.base.VMBaseActivity
+import io.legado.app.constant.AppPattern
+import io.legado.app.constant.EventBus
 import io.legado.app.data.entities.BookSource
+import io.legado.app.databinding.ActivityBookSourceBinding
+import io.legado.app.databinding.DialogEditTextBinding
 import io.legado.app.help.IntentDataHelp
-import io.legado.app.help.ItemTouchCallback
-import io.legado.app.lib.dialogs.*
+import io.legado.app.help.LocalConfig
+import io.legado.app.lib.dialogs.alert
 import io.legado.app.lib.theme.ATH
 import io.legado.app.lib.theme.primaryTextColor
 import io.legado.app.service.help.CheckSource
 import io.legado.app.ui.association.ImportBookSourceActivity
 import io.legado.app.ui.book.source.edit.BookSourceEditActivity
-import io.legado.app.ui.filechooser.FileChooserDialog
-import io.legado.app.ui.filechooser.FilePicker
+import io.legado.app.ui.filepicker.FilePicker
+import io.legado.app.ui.filepicker.FilePickerDialog
 import io.legado.app.ui.qrcode.QrCodeActivity
 import io.legado.app.ui.widget.SelectActionBar
+import io.legado.app.ui.widget.dialog.TextDialog
+import io.legado.app.ui.widget.recycler.DragSelectTouchHelper
+import io.legado.app.ui.widget.recycler.ItemTouchCallback
 import io.legado.app.ui.widget.recycler.VerticalDivider
-import io.legado.app.ui.widget.text.AutoCompleteTextView
 import io.legado.app.utils.*
-import kotlinx.android.synthetic.main.activity_book_source.*
-import kotlinx.android.synthetic.main.dialog_edit_text.view.*
-import kotlinx.android.synthetic.main.view_search.*
 import org.jetbrains.anko.startActivity
 import org.jetbrains.anko.startActivityForResult
 import org.jetbrains.anko.toast
 import java.io.File
 import java.text.Collator
 
-class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity_book_source),
+class BookSourceActivity : VMBaseActivity<ActivityBookSourceBinding, BookSourceViewModel>(),
     PopupMenu.OnMenuItemClickListener,
     BookSourceAdapter.CallBack,
-    FileChooserDialog.CallBack,
+    FilePickerDialog.CallBack,
+    SelectActionBar.CallBack,
     SearchView.OnQueryTextListener {
     override val viewModel: BookSourceViewModel
         get() = getViewModel(BookSourceViewModel::class.java)
@@ -54,17 +59,28 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
     private val importRequestCode = 132
     private val exportRequestCode = 65
     private lateinit var adapter: BookSourceAdapter
+    private lateinit var searchView: SearchView
     private var bookSourceLiveDate: LiveData<List<BookSource>>? = null
     private var groups = linkedSetOf<String>()
     private var groupMenu: SubMenu? = null
     private var sort = 0
+    private var sortAscending = 0
+    private var snackBar: Snackbar? = null
+
+    override fun getViewBinding(): ActivityBookSourceBinding {
+        return ActivityBookSourceBinding.inflate(layoutInflater)
+    }
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
+        searchView = binding.titleBar.findViewById(R.id.search_view)
         initRecyclerView()
         initSearchView()
         initLiveDataBookSource()
         initLiveDataGroup()
         initSelectActionBar()
+        if (LocalConfig.isFirstOpenBookSources) {
+            showHelp()
+        }
     }
 
     override fun onCompatCreateOptionsMenu(menu: Menu): Boolean {
@@ -84,67 +100,74 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
         when (item.itemId) {
             R.id.menu_add_book_source -> startActivity<BookSourceEditActivity>()
             R.id.menu_import_source_qr -> startActivityForResult<QrCodeActivity>(qrRequestCode)
+            R.id.menu_share_source -> viewModel.shareSelection(adapter.getSelection())
             R.id.menu_group_manage ->
                 GroupManageDialog().show(supportFragmentManager, "groupManage")
             R.id.menu_import_source_local -> FilePicker
-                .selectFile(
-                    this,
-                    importRequestCode,
-                    type = arrayOf("text/*", "application/json"),
-                    allowExtensions = arrayOf("txt", "json")
-                )
+                .selectFile(this, importRequestCode, allowExtensions = arrayOf("txt", "json"))
             R.id.menu_import_source_onLine -> showImportDialog()
             R.id.menu_sort_manual -> {
                 item.isChecked = true
-                sort = 0
-                initLiveDataBookSource(search_view.query?.toString())
+                sortCheck(0)
+                initLiveDataBookSource(searchView.query?.toString())
             }
             R.id.menu_sort_auto -> {
                 item.isChecked = true
-                sort = 2
-                initLiveDataBookSource(search_view.query?.toString())
+                sortCheck(1)
+                initLiveDataBookSource(searchView.query?.toString())
             }
             R.id.menu_sort_pin_yin -> {
                 item.isChecked = true
-                sort = 3
-                initLiveDataBookSource(search_view.query?.toString())
+                sortCheck(2)
+                initLiveDataBookSource(searchView.query?.toString())
             }
             R.id.menu_sort_url -> {
                 item.isChecked = true
-                sort = 4
-                initLiveDataBookSource(search_view.query?.toString())
+                sortCheck(3)
+                initLiveDataBookSource(searchView.query?.toString())
+            }
+            R.id.menu_sort_time -> {
+                item.isChecked = true
+                sortCheck(4)
+                initLiveDataBookSource(searchView.query?.toString())
             }
             R.id.menu_enabled_group -> {
-                search_view.setQuery(getString(R.string.enabled), true)
+                searchView.setQuery(getString(R.string.enabled), true)
             }
             R.id.menu_disabled_group -> {
-                search_view.setQuery(getString(R.string.disabled), true)
+                searchView.setQuery(getString(R.string.disabled), true)
             }
+            R.id.menu_help -> showHelp()
         }
         if (item.groupId == R.id.source_group) {
-            search_view.setQuery(item.title, true)
+            searchView.setQuery(item.title, true)
         }
         return super.onCompatOptionsItemSelected(item)
     }
 
     private fun initRecyclerView() {
-        ATH.applyEdgeEffectColor(recycler_view)
-        recycler_view.layoutManager = LinearLayoutManager(this)
-        recycler_view.addItemDecoration(VerticalDivider(this))
+        ATH.applyEdgeEffectColor(binding.recyclerView)
+        binding.recyclerView.layoutManager = LinearLayoutManager(this)
+        binding.recyclerView.addItemDecoration(VerticalDivider(this))
         adapter = BookSourceAdapter(this, this)
-        recycler_view.adapter = adapter
-        val itemTouchCallback = ItemTouchCallback()
-        itemTouchCallback.onItemTouchCallbackListener = adapter
+        binding.recyclerView.adapter = adapter
+        val itemTouchCallback = ItemTouchCallback(adapter)
         itemTouchCallback.isCanDrag = true
-        ItemTouchHelper(itemTouchCallback).attachToRecyclerView(recycler_view)
+        val dragSelectTouchHelper: DragSelectTouchHelper =
+            DragSelectTouchHelper(adapter.initDragSelectTouchHelperCallback()).setSlideArea(16, 50)
+        dragSelectTouchHelper.attachToRecyclerView(binding.recyclerView)
+        // When this page is opened, it is in selection mode
+        dragSelectTouchHelper.activeSlideSelect()
+        // Note: need judge selection first, so add ItemTouchHelper after it.
+        ItemTouchHelper(itemTouchCallback).attachToRecyclerView(binding.recyclerView)
     }
 
     private fun initSearchView() {
-        ATH.setTint(search_view, primaryTextColor)
-        search_view.onActionViewExpanded()
-        search_view.queryHint = getString(R.string.search_book_source)
-        search_view.clearFocus()
-        search_view.setOnQueryTextListener(this)
+        ATH.setTint(searchView, primaryTextColor)
+        searchView.onActionViewExpanded()
+        searchView.queryHint = getString(R.string.search_book_source)
+        searchView.clearFocus()
+        searchView.setOnQueryTextListener(this)
     }
 
     private fun initLiveDataBookSource(searchKey: String? = null) {
@@ -164,11 +187,21 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
             }
         }
         bookSourceLiveDate?.observe(this, { data ->
-            val sourceList = when (sort) {
-                1 -> data.sortedBy { it.weight }
-                2 -> data.sortedBy { it.bookSourceName }
-                3 -> data.sortedBy { it.bookSourceUrl }
-                else -> data
+            val sourceList = when (sortAscending % 2) {
+                0 -> when (sort) {
+                    1 -> data.sortedBy { it.weight }
+                    2 -> data.sortedBy { it.bookSourceName }
+                    3 -> data.sortedBy { it.bookSourceUrl }
+                    4 -> data.sortedByDescending { it.lastUpdateTime }
+                    else -> data
+                }
+                else -> when (sort) {
+                    1 -> data.sortedByDescending { it.weight }
+                    2 -> data.sortedByDescending { it.bookSourceName }
+                    3 -> data.sortedByDescending { it.bookSourceUrl }
+                    4 -> data.sortedBy { it.lastUpdateTime }
+                    else -> data.reversed()
+                }
             }
             val diffResult = DiffUtil
                 .calculateDiff(DiffCallBack(ArrayList(adapter.getItems()), sourceList))
@@ -177,43 +210,54 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
         })
     }
 
+    private fun showHelp() {
+        val text = String(assets.open("help/bookSourcesHelp.md").readBytes())
+        TextDialog.show(supportFragmentManager, text, TextDialog.MD)
+    }
+
+    private fun sortCheck(sortId: Int) {
+        if (sort == sortId) {
+            sortAscending += 1
+        } else {
+            sortAscending = 0
+            sort = sortId
+        }
+    }
+
     private fun initLiveDataGroup() {
         App.db.bookSourceDao().liveGroup().observe(this, {
             groups.clear()
             it.map { group ->
-                groups.addAll(group.splitNotBlank(",", ";"))
+                groups.addAll(group.splitNotBlank(AppPattern.splitGroupRegex))
             }
             upGroupMenu()
         })
     }
 
+    override fun selectAll(selectAll: Boolean) {
+        if (selectAll) {
+            adapter.selectAll()
+        } else {
+            adapter.revertSelection()
+        }
+    }
+
+    override fun revertSelection() {
+        adapter.revertSelection()
+    }
+
+    override fun onClickMainAction() {
+        alert(titleResource = R.string.draw, messageResource = R.string.sure_del) {
+            okButton { viewModel.delSelection(adapter.getSelection()) }
+            noButton()
+        }.show()
+    }
+
     private fun initSelectActionBar() {
-        select_action_bar.setMainActionText(R.string.delete)
-        select_action_bar.inflateMenu(R.menu.book_source_sel)
-        select_action_bar.setOnMenuItemClickListener(this)
-        select_action_bar.setCallBack(object : SelectActionBar.CallBack {
-            override fun selectAll(selectAll: Boolean) {
-                if (selectAll) {
-                    adapter.selectAll()
-                } else {
-                    adapter.revertSelection()
-                }
-            }
-
-            override fun revertSelection() {
-                adapter.revertSelection()
-            }
-
-            override fun onClickMainAction() {
-                this@BookSourceActivity
-                    .alert(titleResource = R.string.draw, messageResource = R.string.sure_del) {
-                        okButton { viewModel.delSelection(adapter.getSelection()) }
-                        noButton { }
-                    }
-                    .show().applyTint()
-            }
-        })
-
+        binding.selectActionBar.setMainActionText(R.string.delete)
+        binding.selectActionBar.inflateMenu(R.menu.book_source_sel)
+        binding.selectActionBar.setOnMenuItemClickListener(this)
+        binding.selectActionBar.setCallBack(this)
     }
 
     override fun onMenuItemClick(item: MenuItem?): Boolean {
@@ -222,12 +266,12 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
             R.id.menu_disable_selection -> viewModel.disableSelection(adapter.getSelection())
             R.id.menu_enable_explore -> viewModel.enableSelectExplore(adapter.getSelection())
             R.id.menu_disable_explore -> viewModel.disableSelectExplore(adapter.getSelection())
-            R.id.menu_export_selection -> FilePicker.selectFolder(this, exportRequestCode)
             R.id.menu_check_source -> checkSource()
             R.id.menu_top_sel -> viewModel.topSource(*adapter.getSelection().toTypedArray())
             R.id.menu_bottom_sel -> viewModel.bottomSource(*adapter.getSelection().toTypedArray())
             R.id.menu_add_group -> selectionAddToGroups()
             R.id.menu_remove_group -> selectionRemoveFromGroups()
+            R.id.menu_export_selection -> FilePicker.selectFolder(this, exportRequestCode)
         }
         return true
     }
@@ -235,65 +279,60 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
     @SuppressLint("InflateParams")
     private fun checkSource() {
         alert(titleResource = R.string.search_book_key) {
-            var editText: AutoCompleteTextView? = null
-            customView {
-                layoutInflater.inflate(R.layout.dialog_edit_text, null).apply {
-                    editText = edit_view
-                    edit_view.setText(CheckSource.keyword)
-                }
+            val alertBinding = DialogEditTextBinding.inflate(layoutInflater).apply {
+                editView.setText(CheckSource.keyword)
             }
+            customView = alertBinding.root
             okButton {
-                editText?.text?.toString()?.let {
+                alertBinding.editView.text?.toString()?.let {
                     if (it.isNotEmpty()) {
                         CheckSource.keyword = it
                     }
                 }
                 CheckSource.start(this@BookSourceActivity, adapter.getSelection())
             }
-            noButton { }
-        }.show().applyTint()
+            noButton()
+        }.show()
     }
 
     @SuppressLint("InflateParams")
     private fun selectionAddToGroups() {
         alert(titleResource = R.string.add_group) {
-            var editText: AutoCompleteTextView? = null
-            customView {
-                layoutInflater.inflate(R.layout.dialog_edit_text, null).apply {
-                    editText = edit_view
-                    edit_view.setHint(R.string.group_name)
-                }
+            val alertBinding = DialogEditTextBinding.inflate(layoutInflater).apply {
+                editView.setHint(R.string.group_name)
+                editView.setFilterValues(groups.toList())
+                editView.dropDownHeight = 180.dp
             }
+            customView = alertBinding.root
             okButton {
-                editText?.text?.toString()?.let {
+                alertBinding.editView.text?.toString()?.let {
                     if (it.isNotEmpty()) {
                         viewModel.selectionAddToGroups(adapter.getSelection(), it)
                     }
                 }
             }
-            noButton { }
-        }.show().applyTint()
+            cancelButton()
+        }.show()
     }
 
     @SuppressLint("InflateParams")
     private fun selectionRemoveFromGroups() {
         alert(titleResource = R.string.remove_group) {
-            var editText: AutoCompleteTextView? = null
-            customView {
-                layoutInflater.inflate(R.layout.dialog_edit_text, null).apply {
-                    editText = edit_view
-                    edit_view.setHint(R.string.group_name)
-                }
+            val alertBinding = DialogEditTextBinding.inflate(layoutInflater).apply {
+                editView.setHint(R.string.group_name)
+                editView.setFilterValues(groups.toList())
+                editView.dropDownHeight = 180.dp
             }
+            customView = alertBinding.root
             okButton {
-                editText?.text?.toString()?.let {
+                alertBinding.editView.text?.toString()?.let {
                     if (it.isNotEmpty()) {
                         viewModel.selectionRemoveFromGroups(adapter.getSelection(), it)
                     }
                 }
             }
-            noButton { }
-        }.show().applyTint()
+            cancelButton()
+        }.show()
     }
 
     private fun upGroupMenu() {
@@ -312,19 +351,16 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
             ?.splitNotBlank(",")
             ?.toMutableList() ?: mutableListOf()
         alert(titleResource = R.string.import_book_source_on_line) {
-            var editText: AutoCompleteTextView? = null
-            customView {
-                layoutInflater.inflate(R.layout.dialog_edit_text, null).apply {
-                    editText = edit_view
-                    edit_view.setFilterValues(cacheUrls)
-                    edit_view.delCallBack = {
-                        cacheUrls.remove(it)
-                        aCache.put(importRecordKey, cacheUrls.joinToString(","))
-                    }
+            val alertBinding = DialogEditTextBinding.inflate(layoutInflater).apply {
+                editView.setFilterValues(cacheUrls)
+                editView.delCallBack = {
+                    cacheUrls.remove(it)
+                    aCache.put(importRecordKey, cacheUrls.joinToString(","))
                 }
             }
+            customView = alertBinding.root
             okButton {
-                val text = editText?.text?.toString()
+                val text = alertBinding.editView.text?.toString()
                 text?.let {
                     if (!cacheUrls.contains(it)) {
                         cacheUrls.add(0, it)
@@ -334,11 +370,34 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
                 }
             }
             cancelButton()
-        }.show().applyTint()
+        }.show()
+    }
+
+    override fun observeLiveBus() {
+        observeEvent<String>(EventBus.CHECK_SOURCE) { msg ->
+            snackBar?.setText(msg) ?: let {
+                snackBar = Snackbar
+                    .make(binding.root, msg, Snackbar.LENGTH_INDEFINITE)
+                    .setAction(R.string.cancel) {
+                        CheckSource.stop(this)
+                    }.apply { show() }
+            }
+        }
+        observeEvent<Int>(EventBus.CHECK_SOURCE_DONE) {
+            snackBar?.dismiss()
+            snackBar = null
+            groups.map { group ->
+                if (group.contains("失效")) {
+                    searchView.setQuery("失效", true)
+                    toast("发现有失效书源，已为您自动筛选！")
+                }
+            }
+        }
     }
 
     override fun upCountView() {
-        select_action_bar.upCountView(adapter.getSelection().size, adapter.getActualItemCount())
+        binding.selectActionBar
+            .upCountView(adapter.getSelection().size, adapter.getActualItemCount())
     }
 
     override fun onQueryTextChange(newText: String?): Boolean {
@@ -376,18 +435,6 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
         viewModel.bottomSource(bookSource)
     }
 
-    override fun onFilePicked(requestCode: Int, currentPath: String) {
-        when (requestCode) {
-            exportRequestCode -> viewModel.exportSelection(
-                adapter.getSelection(),
-                File(currentPath)
-            )
-            importRequestCode -> {
-                startActivity<ImportBookSourceActivity>(Pair("filePath", currentPath))
-            }
-        }
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
@@ -410,7 +457,7 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
             }
             exportRequestCode -> {
                 data?.data?.let { uri ->
-                    if (uri.toString().isContentPath()) {
+                    if (uri.isContentScheme()) {
                         DocumentFile.fromTreeUri(this, uri)?.let {
                             viewModel.exportSelection(adapter.getSelection(), it)
                         }
@@ -425,10 +472,11 @@ class BookSourceActivity : VMBaseActivity<BookSourceViewModel>(R.layout.activity
     }
 
     override fun finish() {
-        if (search_view.query.isNullOrEmpty()) {
+        if (searchView.query.isNullOrEmpty()) {
             super.finish()
         } else {
-            search_view.setQuery("", true)
+            searchView.setQuery("", true)
         }
     }
+
 }
